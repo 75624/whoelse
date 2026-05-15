@@ -27,7 +27,7 @@ func main() {
 
 	fs := http.FileServer(http.Dir("./static"))
 	http.Handle("/static/", http.StripPrefix("/static/", fs))
-	
+
 	http.HandleFunc("/", handleHome)
 	http.HandleFunc("/action/dump", handleDumpAction)
 	http.HandleFunc("/events", handleEvents)
@@ -57,7 +57,7 @@ func getOrCreateSession(w http.ResponseWriter, r *http.Request) string {
 
 	// No cookie found, create a new one
 	sessionID := generateSessionID()
-	http.SetCookie(w, &http.SetCookie{
+	http.SetCookie(w, &http.Cookie{
 		Name:     "whoelse_session",
 		Value:    sessionID,
 		Path:     "/",
