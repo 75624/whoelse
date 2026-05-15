@@ -1,14 +1,16 @@
 package main
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"log"
 	"net/http"
+	"os"
 	"sync"
 	"time"
 )
 
-// Global state to track who is currently "active"
 type AppState struct {
 	sync.Mutex
 	ActiveDumpers map[string]time.Time
@@ -21,79 +23,96 @@ var state = AppState{
 }
 
 func main() {
-	// Start the background worker to clean up inactive users
 	go janitor()
 
-	// Serve static files (HTML/CSS)
 	fs := http.FileServer(http.Dir("./static"))
 	http.Handle("/static/", http.StripPrefix("/static/", fs))
 	
-	// Route for the homepage
-	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		http.ServeFile(w, r, "./static/index.html")
-	})
-
-	// Route when someone clicks the button
+	http.HandleFunc("/", handleHome)
 	http.HandleFunc("/action/dump", handleDumpAction)
-
-	// Route for the real-time SSE stream
 	http.HandleFunc("/events", handleEvents)
 
-	fmt.Println("Server starting on http://localhost:8080")
-	log.Fatal(http.ListenAndServe(":8080", nil))
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "8080"
+	}
+
+	fmt.Printf("Server starting on port %s\n", port)
+	log.Fatal(http.ListenAndServe(":"+port, nil))
 }
 
-// 1. Handle the button click
+// Helper to generate a random session ID
+func generateSessionID() string {
+	b := make([]byte, 16)
+	_, _ = rand.Read(b)
+	return hex.EncodeToString(b)
+}
+
+// Get or set the session cookie
+func getOrCreateSession(w http.ResponseWriter, r *http.Request) string {
+	cookie, err := r.Cookie("whoelse_session")
+	if err == nil {
+		return cookie.Value
+	}
+
+	// No cookie found, create a new one
+	sessionID := generateSessionID()
+	http.SetCookie(w, &http.SetCookie{
+		Name:     "whoelse_session",
+		Value:    sessionID,
+		Path:     "/",
+		Expires:  time.Now().Add(24 * time.Hour),
+		HttpOnly: true, // Security best practice
+		SameSite: http.SameSiteLaxMode,
+	})
+	return sessionID
+}
+
+func handleHome(w http.ResponseWriter, r *http.Request) {
+	// Ensure they get a session cookie just by visiting the page
+	getOrCreateSession(w, r)
+	http.ServeFile(w, r, "./static/index.html")
+}
+
 func handleDumpAction(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
+	// Identify the user by their unique cookie instead of IP
+	sessionID := getOrCreateSession(w, r)
+
 	state.Lock()
-	// Use the remote IP address as a simple unique identifier
-	ip := r.RemoteAddr
-	// Set an expiration time 10 minutes from now
-	state.ActiveDumpers[ip] = time.Now().Add(10 * time.Minute)
+	state.ActiveDumpers[sessionID] = time.Now().Add(10 * time.Minute)
 	currentCount := len(state.ActiveDumpers)
 	state.Unlock()
 
-	// Broadcast the new count to everyone immediately
 	broadcast(currentCount)
-
-	// HTMX expects a response. Since hx-swap="none", we return nothing.
 	w.WriteHeader(http.StatusOK)
 }
 
-// 2. Handle the Live Event Stream (SSE)
 func handleEvents(w http.ResponseWriter, r *http.Request) {
-	// Set headers required for Server-Sent Events
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
 
-	// Create a channel for this specific browser tab
 	messageChan := make(chan int)
 
 	state.Lock()
 	state.Clients[messageChan] = true
-	// Send the current count immediately upon connecting
 	initialCount := len(state.ActiveDumpers)
 	state.Unlock()
 
-	// Send initial count
 	fmt.Fprintf(w, "event: dump_update\ndata: %d\n\n", initialCount)
 	w.(http.Flusher).Flush()
 
-	// Keep connection open and listen for updates or disconnects
 	for {
 		select {
 		case count := <-messageChan:
-			// Push the updated count to the browser
 			fmt.Fprintf(w, "event: dump_update\ndata: %d\n\n", count)
 			w.(http.Flusher).Flush()
 		case <-r.Context().Done():
-			// Browser closed the tab
 			state.Lock()
 			delete(state.Clients, messageChan)
 			close(messageChan)
@@ -103,7 +122,6 @@ func handleEvents(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// 3. Helper to send updates to all connected browser tabs
 func broadcast(count int) {
 	state.Lock()
 	defer state.Unlock()
@@ -112,18 +130,17 @@ func broadcast(count int) {
 	}
 }
 
-// 4. The Janitor: Runs in background, boots people out after 10 minutes
 func janitor() {
 	for {
-		time.Sleep(10 * time.Second) // Check every 10 seconds
+		time.Sleep(10 * time.Second)
 
 		state.Lock()
 		now := time.Now()
 		changed := false
 
-		for ip, expiry := range state.ActiveDumpers {
+		for sessionID, expiry := range state.ActiveDumpers {
 			if now.After(expiry) {
-				delete(state.ActiveDumpers, ip)
+				delete(state.ActiveDumpers, sessionID)
 				changed = true
 			}
 		}
@@ -131,7 +148,6 @@ func janitor() {
 		currentCount := len(state.ActiveDumpers)
 		state.Unlock()
 
-		// If someone expired, tell everyone the count went down
 		if changed {
 			broadcast(currentCount)
 		}
