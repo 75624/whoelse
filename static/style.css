@@ -1,0 +1,58 @@
+body {
+    background: #121212;
+    color: white;
+    font-family: sans-serif;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    height: 100vh;
+    margin: 0;
+    text-align: center;
+}
+
+.container {
+    width: 90%;
+    max-width: 400px;
+}
+
+h1 {
+    font-style: italic;
+    letter-spacing: -2px;
+    margin-bottom: 2rem;
+}
+
+.counter-box {
+    background: #1e1e1e;
+    padding: 3rem 1rem;
+    border-radius: 20px;
+    margin-bottom: 2rem;
+}
+
+.label {
+    font-size: 0.7rem;
+    color: #888;
+    letter-spacing: 2px;
+}
+
+.number {
+    font-size: 5rem;
+    font-weight: bold;
+    color: #ff9800;
+    margin: 10px 0;
+}
+
+button {
+    width: 100%;
+    padding: 1.5rem;
+    border-radius: 15px;
+    border: none;
+    background: #ff9800;
+    color: black;
+    font-size: 1.2rem;
+    font-weight: bold;
+    cursor: pointer;
+}
+
+button:active {
+    transform: scale(0.98);
+}
